@@ -1,0 +1,175 @@
+import org.telegram.telegrambots.api.methods.GetFile;
+import org.telegram.telegrambots.api.methods.send.SendMessage;
+import org.telegram.telegrambots.api.methods.send.SendPhoto;
+import org.telegram.telegrambots.api.objects.Update;
+import org.telegram.telegrambots.bots.TelegramLongPollingBot;
+import org.telegram.telegrambots.exceptions.TelegramApiException;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.Random;
+
+
+
+public class Bot extends TelegramLongPollingBot {
+    File file = new File("FILE");
+
+    public void onUpdateReceived(Update update) {
+        System.out.println(update.getMessage().getText());
+        String command = update.getMessage().getText();
+        SendMessage message = new SendMessage();
+
+        if (command.equals("/faq")) {
+            faq(update);
+        }
+        //sends a photo from the director specified on line 14
+        if (command.equals("/photo")) {
+            sendPhoto(update);
+        }
+        if (command.equals("/windows")){
+            windowsEncryption(update);
+        }
+        if(command.equals("/mac")){
+            macEncryption(update);
+        }
+        if(command.equals("/android")){
+            androidEncryption(update);
+        }
+        if(command.equals("/iphone")){
+            iphoneEncryption(update);
+        }
+       
+    }
+
+  
+
+
+    public void faq(Update update){
+        System.out.println(update.getMessage().getText());
+        SendMessage message = new SendMessage();
+        message.setText("I am an info bot. Use the following commands: /windows , /mac , /android . /iphone"
+                + "\n If you are compliant with cybersec requirements, please type /iamcompliant");
+        message.setChatId(update.getMessage().getChatId());
+
+
+        try {
+            execute(message);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void sendPhoto(Update update) {
+        ArrayList<File> pics = new ArrayList<File>();
+        if (update.getMessage().getFrom().getUserName().equals("RBYN5A22")) {
+
+            File dir = new File("FOLDER");
+
+            //load all the pics into the array
+
+            for (File pic : dir.listFiles()) {
+                if (!pic.isDirectory()) {
+                    pics.add(pic);
+                }
+
+            }
+            SendPhoto photo = new SendPhoto();
+            //Make a random number between 0 and pics.length()
+            Random rand = new Random();
+            int n = rand.nextInt(pics.size()) + 0;
+            photo.setNewPhoto(pics.get(n));
+            photo.setChatId(update.getMessage().getChatId());
+            System.out.println(update.getMessage().getText() + " " + n);
+            try {
+                sendPhoto(photo);
+            } catch (TelegramApiException e) {
+                e.printStackTrace();
+            }
+        } 
+
+            }
+            SendPhoto photo = new SendPhoto();
+            //Make a random number between 0 and pics.length()
+            Random rand = new Random();
+            int n = rand.nextInt(pics.size()) + 0;
+            photo.setNewPhoto(pics.get(n));
+            photo.setChatId(update.getMessage().getChatId());
+            System.out.println(update.getMessage().getText() + " " + n);
+            try {
+                sendPhoto(photo);
+            } catch (TelegramApiException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public void windowsEncryption(Update update){
+        System.out.println(update.getMessage().getText());
+        SendMessage message = new SendMessage();
+        message.setText("For Windows 10 manchines, you will need to activate Bitlocker on your C Drive. Follow this link to do that:" +
+                " https://www.windowscentral.com/how-use-bitlocker-encryption-windows-10" + "\n if you have any difficulties (for example, your PC does not have " +
+                "Bitlocker activated, you will need to talk to the IT guy. If you are using a later version of Windows, well then it's time to " +
+                "update your life.");
+        message.setChatId(update.getMessage().getChatId());
+
+
+        try {
+            execute(message);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+
+    }
+
+    public void macEncryption(Update update){
+        System.out.println(update.getMessage().getText());
+        SendMessage message = new SendMessage();
+        message.setText("For Macs use native encryption: https://support.apple.com/en-gb/HT204837");
+        message.setChatId(update.getMessage().getChatId());
+
+
+        try {
+            execute(message);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+
+    }
+
+    public void androidEncryption(Update update){
+        System.out.println(update.getMessage().getText());
+        SendMessage message = new SendMessage();
+        message.setText(" For Android, encrpyt your phone using this guide: https://www.techrepublic.com/article/encrypt-your-android-smartphone-for-paranoid-level-security/");
+        message.setChatId(update.getMessage().getChatId());
+
+
+        try {
+            execute(message);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void iphoneEncryption(Update update){
+        System.out.println(update.getMessage().getText());
+        SendMessage message = new SendMessage();
+        message.setText("For Iphone, encrpyt your phone using this guide:  https://ssd.eff.org/en/module/how-encrypt-your-iphone");
+        message.setChatId(update.getMessage().getChatId());
+
+
+        try {
+            execute(message);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+
+    }
+
+
+    public String getBotUsername() {
+        return "Identitarian_bot";
+    }
+
+    public String getBotToken() {
+        return "571307050:AAEIl8oFq7Z_WRmodJWN8YAXslSl53tIXFE";
+    }
+}
