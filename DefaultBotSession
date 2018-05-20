@@ -1,0 +1,340 @@
+//
+// Source code recreated from a .class file by IntelliJ IDEA
+// (powered by Fernflower decompiler)
+//
+
+package org.telegram.telegrambots.updatesreceivers;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.inject.Inject;
+import java.io.IOException;
+import java.io.InvalidObjectException;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
+import java.nio.charset.StandardCharsets;
+import java.security.InvalidParameterException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import org.apache.http.HttpEntity;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.BufferedHttpEntity;
+import org.apache.http.entity.ContentType;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.util.EntityUtils;
+import org.json.JSONException;
+import org.telegram.telegrambots.api.methods.updates.GetUpdates;
+import org.telegram.telegrambots.api.objects.Update;
+import org.telegram.telegrambots.bots.DefaultBotOptions;
+import org.telegram.telegrambots.exceptions.TelegramApiRequestException;
+import org.telegram.telegrambots.facilities.TelegramHttpClientBuilder;
+import org.telegram.telegrambots.generics.BotOptions;
+import org.telegram.telegrambots.generics.BotSession;
+import org.telegram.telegrambots.generics.LongPollingBot;
+import org.telegram.telegrambots.generics.UpdatesHandler;
+import org.telegram.telegrambots.generics.UpdatesReader;
+import org.telegram.telegrambots.logging.BotLogger;
+
+public class DefaultBotSession implements BotSession {
+    private static final String LOGTAG = "BOTSESSION";
+    private volatile boolean running = false;
+    private final ConcurrentLinkedDeque<Update> receivedUpdates = new ConcurrentLinkedDeque();
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private DefaultBotSession.ReaderThread readerThread;
+    private DefaultBotSession.HandlerThread handlerThread;
+    private LongPollingBot callback;
+    private String token;
+    private int lastReceivedUpdate = 0;
+    private DefaultBotOptions options;
+    private DefaultBotSession.UpdatesSupplier updatesSupplier;
+
+    @Inject
+    public DefaultBotSession() {
+    }
+
+    public synchronized void start() {
+        if (this.running) {
+            throw new IllegalStateException("Session already running");
+        } else {
+            this.running = true;
+            this.lastReceivedUpdate = 0;
+            this.readerThread = new DefaultBotSession.ReaderThread(this.updatesSupplier, this);
+            this.readerThread.setName(this.callback.getBotUsername() + " Telegram Connection");
+            this.readerThread.start();
+            this.handlerThread = new DefaultBotSession.HandlerThread();
+            this.handlerThread.setName(this.callback.getBotUsername() + " Telegram Executor");
+            this.handlerThread.start();
+        }
+    }
+
+    public synchronized void stop() {
+        if (!this.running) {
+            throw new IllegalStateException("Session already stopped");
+        } else {
+            this.running = false;
+            if (this.readerThread != null) {
+                this.readerThread.interrupt();
+            }
+
+            if (this.handlerThread != null) {
+                this.handlerThread.interrupt();
+            }
+
+            if (this.callback != null) {
+                this.callback.onClosing();
+            }
+
+        }
+    }
+
+    public void setUpdatesSupplier(DefaultBotSession.UpdatesSupplier updatesSupplier) {
+        this.updatesSupplier = updatesSupplier;
+    }
+
+    public void setOptions(BotOptions options) {
+        if (this.options != null) {
+            throw new InvalidParameterException("BotOptions has already been set");
+        } else {
+            this.options = (DefaultBotOptions)options;
+        }
+    }
+
+    public void setToken(String token) {
+        if (this.token != null) {
+            throw new InvalidParameterException("Token has already been set");
+        } else {
+            this.token = token;
+        }
+    }
+
+    public void setCallback(LongPollingBot callback) {
+        if (this.callback != null) {
+            throw new InvalidParameterException("Callback has already been set");
+        } else {
+            this.callback = callback;
+        }
+    }
+
+    public synchronized boolean isRunning() {
+        return this.running;
+    }
+
+    private List<Update> getUpdateList() {
+        List<Update> updates = new ArrayList();
+        Iterator it = this.receivedUpdates.iterator();
+
+        while(it.hasNext()) {
+            updates.add(it.next());
+            it.remove();
+        }
+
+        return updates;
+    }
+
+    private class HandlerThread extends Thread implements UpdatesHandler {
+        private HandlerThread() {
+        }
+
+        public void run() {
+            this.setPriority(1);
+
+            while(DefaultBotSession.this.running) {
+                try {
+                    List<Update> updates = DefaultBotSession.this.getUpdateList();
+                    if (updates.isEmpty()) {
+                        synchronized(DefaultBotSession.this.receivedUpdates) {
+                            DefaultBotSession.this.receivedUpdates.wait();
+                            updates = DefaultBotSession.this.getUpdateList();
+                            if (updates.isEmpty()) {
+                                continue;
+                            }
+                        }
+                    }
+
+                    DefaultBotSession.this.callback.onUpdatesReceived(updates);
+                } catch (InterruptedException var5) {
+                    BotLogger.debug("BOTSESSION", var5);
+                    this.interrupt();
+                } catch (Exception var6) {
+                    BotLogger.severe("BOTSESSION", var6);
+                }
+            }
+
+            BotLogger.debug("BOTSESSION", "Handler thread has being closed");
+        }
+    }
+
+    public interface UpdatesSupplier {
+        List<Update> getUpdates() throws Exception;
+    }
+
+    private class ReaderThread extends Thread implements UpdatesReader {
+        private final DefaultBotSession.UpdatesSupplier updatesSupplier;
+        private final Object lock;
+        private CloseableHttpClient httpclient;
+        private ExponentialBackOff exponentialBackOff;
+        private RequestConfig requestConfig;
+
+        public ReaderThread(DefaultBotSession.UpdatesSupplier updatesSupplier, Object lock) {
+            this.updatesSupplier = (DefaultBotSession.UpdatesSupplier)Optional.ofNullable(updatesSupplier).orElse(this::getUpdatesFromServer);
+            this.lock = lock;
+        }
+
+        public synchronized void start() {
+            this.httpclient = TelegramHttpClientBuilder.build(DefaultBotSession.this.options);
+            this.requestConfig = DefaultBotSession.this.options.getRequestConfig();
+            this.exponentialBackOff = DefaultBotSession.this.options.getExponentialBackOff();
+            if (this.exponentialBackOff == null) {
+                this.exponentialBackOff = new ExponentialBackOff();
+            }
+
+            if (this.requestConfig == null) {
+                this.requestConfig = RequestConfig.copy(RequestConfig.custom().build()).setSocketTimeout(75000).setConnectTimeout(75000).setConnectionRequestTimeout(75000).build();
+            }
+
+            super.start();
+        }
+
+        public void interrupt() {
+            if (this.httpclient != null) {
+                try {
+                    this.httpclient.close();
+                } catch (IOException var2) {
+                    BotLogger.warn("BOTSESSION", var2);
+                }
+            }
+
+            super.interrupt();
+        }
+
+        public void run() {
+            this.setPriority(1);
+
+            while(DefaultBotSession.this.running) {
+                Object var1 = this.lock;
+                synchronized(this.lock) {
+                    if (DefaultBotSession.this.running) {
+                        try {
+                            List<Update> updates = this.updatesSupplier.getUpdates();
+                            if (updates.isEmpty()) {
+                                this.lock.wait(500L);
+                            } else {
+                                updates.removeIf((x) -> {
+                                    return x.getUpdateId() < DefaultBotSession.this.lastReceivedUpdate;
+                                });
+                                DefaultBotSession.this.lastReceivedUpdate = (Integer)updates.parallelStream().map(Update::getUpdateId).max(Integer::compareTo).orElse(0);
+                                DefaultBotSession.this.receivedUpdates.addAll(updates);
+                                synchronized(DefaultBotSession.this.receivedUpdates) {
+                                    DefaultBotSession.this.receivedUpdates.notifyAll();
+                                }
+                            }
+                        } catch (InterruptedException var10) {
+                            if (!DefaultBotSession.this.running) {
+                                DefaultBotSession.this.receivedUpdates.clear();
+                            }
+
+                            BotLogger.debug("BOTSESSION", var10);
+                            this.interrupt();
+                        } catch (Exception var11) {
+                            BotLogger.severe("BOTSESSION", var11);
+
+                            try {
+                                Object var3 = this.lock;
+                                synchronized(this.lock) {
+                                    this.lock.wait(this.exponentialBackOff.nextBackOffMillis());
+                                }
+                            } catch (InterruptedException var9) {
+                                if (!DefaultBotSession.this.running) {
+                                    DefaultBotSession.this.receivedUpdates.clear();
+                                }
+
+                                BotLogger.debug("BOTSESSION", var9);
+                                this.interrupt();
+                            }
+                        }
+                    }
+                }
+            }
+
+            BotLogger.debug("BOTSESSION", "Reader thread has being closed");
+        }
+
+        private List<Update> getUpdatesFromServer() throws IOException {
+            GetUpdates request = (new GetUpdates()).setLimit(100).setTimeout(50).setOffset(DefaultBotSession.this.lastReceivedUpdate + 1);
+            if (DefaultBotSession.this.options.getAllowedUpdates() != null) {
+                request.setAllowedUpdates(DefaultBotSession.this.options.getAllowedUpdates());
+            }
+
+            String url = DefaultBotSession.this.options.getBaseUrl() + DefaultBotSession.this.token + "/" + "getupdates";
+            HttpPost httpPost = new HttpPost(url);
+            httpPost.addHeader("charset", StandardCharsets.UTF_8.name());
+            httpPost.setConfig(this.requestConfig);
+            httpPost.setEntity(new StringEntity(DefaultBotSession.this.objectMapper.writeValueAsString(request), ContentType.APPLICATION_JSON));
+
+            try {
+                CloseableHttpResponse response = this.httpclient.execute(httpPost);
+                Throwable var5 = null;
+
+                ArrayList var10;
+                try {
+                    HttpEntity ht = response.getEntity();
+                    BufferedHttpEntity buf = new BufferedHttpEntity(ht);
+                    String responseContent = EntityUtils.toString(buf, StandardCharsets.UTF_8);
+                    if (response.getStatusLine().getStatusCode() >= 500) {
+                        BotLogger.warn("BOTSESSION", responseContent);
+                        Object var32 = this.lock;
+                        synchronized(this.lock) {
+                            this.lock.wait(500L);
+                            return Collections.emptyList();
+                        }
+                    }
+
+                    try {
+                        List<Update> updates = request.deserializeResponse(responseContent);
+                        this.exponentialBackOff.reset();
+                        var10 = updates;
+                    } catch (JSONException var26) {
+                        BotLogger.severe(responseContent, "BOTSESSION", var26);
+                        return Collections.emptyList();
+                    }
+                } catch (Throwable var27) {
+                    var5 = var27;
+                    throw var27;
+                } finally {
+                    if (response != null) {
+                        if (var5 != null) {
+                            try {
+                                response.close();
+                            } catch (Throwable var24) {
+                                var5.addSuppressed(var24);
+                            }
+                        } else {
+                            response.close();
+                        }
+                    }
+
+                }
+
+                return var10;
+            } catch (InvalidObjectException | TelegramApiRequestException | SocketException var29) {
+                BotLogger.severe("BOTSESSION", var29);
+            } catch (SocketTimeoutException var30) {
+                BotLogger.fine("BOTSESSION", var30);
+            } catch (InterruptedException var31) {
+                BotLogger.fine("BOTSESSION", var31);
+                this.interrupt();
+            }
+
+            return Collections.emptyList();
+        }
+    }
+}
