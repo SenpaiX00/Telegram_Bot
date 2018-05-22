@@ -60,7 +60,7 @@ public class Bot extends TelegramLongPollingBot {
 
     public void sendPhoto(Update update) {
         ArrayList<File> pics = new ArrayList<File>();
-        if (update.getMessage().getFrom().getUserName().equals("RBYN5A22")) {
+        if (update.getMessage().getFrom().getUserName().equals("YOUR_USER_NAME_HERE")) {
 
             File dir = new File("FOLDER");
 
